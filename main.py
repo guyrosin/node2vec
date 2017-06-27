@@ -1,14 +1,12 @@
 import argparse
-from enum import Enum
 
-import networkx as nx
+import graph_tool
+import time
+import pickle
+import os
+
 import node2vec
 from gensim.models import Word2Vec
-
-
-class NodeType(Enum):
-    Concept = 1
-    Event = 2
 
 
 def parse_args():
@@ -17,7 +15,7 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run node2vec.")
 
-    parser.add_argument('--input', nargs='?', default='graph/wikilinks.graphml',
+    parser.add_argument('--input', nargs='?', default='wiki.gt',
                         help='Input graph path')
 
     parser.add_argument('--output', nargs='?', default='emb/karate.emb',
@@ -26,20 +24,23 @@ def parse_args():
     parser.add_argument('--dimensions', type=int, default=128,
                         help='Number of dimensions. Default is 128.')
 
-    parser.add_argument('--walk-length', type=int, default=80,
-                        help='Length of walk per source. Default is 80.')
+    parser.add_argument('--walk-length', type=int, default=60,  # was 80
+                        help='Length of walk per source. Default is 60.')
 
-    parser.add_argument('--num-walks', type=int, default=10,
+    parser.add_argument('--num-walks', type=int, default=8,  # was 10
                         help='Number of walks per source. Default is 10.')
 
-    parser.add_argument('--window-size', type=int, default=10,
-                        help='Context size for optimization. Default is 10.')
+    parser.add_argument('--window-size', type=int, default=5,  # was 10
+                        help='Context size for optimization. Default is 5.')
 
     parser.add_argument('--iter', default=1, type=int,
                         help='Number of epochs in SGD')
 
-    parser.add_argument('--workers', type=int, default=8,
-                        help='Number of parallel workers. Default is 8.')
+    parser.add_argument('--min-count', type=int, default=5,  # wasn't here originally (w2v's default is 5)
+                        help='Minimum count for word2vec. Default is 5.')
+
+    parser.add_argument('--workers', type=int, default=4,
+                        help='Number of parallel workers. Default is 4.')
 
     parser.add_argument('--p', type=float, default=1,
                         help='Return hyperparameter. Default is 1.')
@@ -53,26 +54,22 @@ def parse_args():
     parser.set_defaults(weighted=False)
 
     parser.add_argument('--directed', dest='directed', action='store_true',
-                        help='Graph is (un)directed. Default is undirected.')
+                        help='Graph is (un)directed. Default is directed.')
     parser.add_argument('--undirected', dest='undirected', action='store_false')
-    parser.set_defaults(directed=False)
+    parser.set_defaults(directed=True)
 
     return parser.parse_args()
 
 
-def read_graph():
+def read_graph(graph_file_path):
     '''
-    Reads the input network in networkx, as an undirected (and optionally weighted) graph
+    Reads the input network in graph_tool, as a directed graph
     '''
-    G = nx.read_graphml(args.input)
-    # if args.weighted:
-    #     G = nx.read_edgelist(args.input, data=(('type', NodeType), ('weight', float)))
-    # else:
-    #     G = nx.read_edgelist(args.input, data=('type', NodeType))
-    #     for edge in G.edges():
-    #         G[edge[0]][edge[1]]['weight'] = 1
-
-    return G
+    start = time.time()
+    g = graph_tool.load_graph(graph_file_path)
+    end = time.time()
+    print('loading the graph took {}'.format(end - start))
+    return g
 
 
 def learn_embeddings(walks):
@@ -80,8 +77,11 @@ def learn_embeddings(walks):
     Learn embeddings by optimizing the Skipgram objective using SGD.
     '''
     walks = [map(str, walk) for walk in walks]
-    model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=0, sg=1, workers=args.workers,
-                     iter=args.iter)
+    start = time.time()
+    model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
+                     workers=args.workers, iter=args.iter)
+    end = time.time()
+    print('building th w2v model took {}'.format(end - start))
     model.save_word2vec_format(args.output)
 
     return
@@ -91,10 +91,31 @@ def main(args):
     '''
     Pipeline for representational learning for all nodes in a graph.
     '''
-    nx_G = read_graph()
-    G = node2vec.Graph(nx_G, args.directed, args.p, args.q)
-    G.preprocess_transition_probs()
-    walks = G.simulate_walks(args.num_walks, args.walk_length)
+    walks_file_path = 'walks.pickle'
+    alias_nodes_file_path = 'alias_nodes.pickle'
+    alias_edges_file_path = 'alias_edges.pickle'
+    if not os.path.isfile(walks_file_path):
+        gt_g = read_graph(args.input)
+        G = node2vec.Graph(gt_g, args.directed, args.p, args.q)
+        if not os.path.isfile(alias_nodes_file_path) or not os.path.isfile(alias_edges_file_path):
+            start = time.time()
+            G.preprocess_transition_probs()
+            end = time.time()
+            print('preprocessing probs took {}'.format(end - start))
+        else:
+            with open(alias_nodes_file_path, 'rb') as file_obj:
+                G.alias_nodes = pickle.load(file_obj)
+            with open(alias_edges_file_path, 'rb') as file_obj:
+                G.alias_edges = pickle.load(file_obj)
+        start = time.time()
+        walks = G.simulate_walks(args.num_walks, args.walk_length)
+        end = time.time()
+        print('simulating walks took {}'.format(end - start))
+        with open(walks_file_path, 'wb') as file_obj:
+            pickle.dump(walks, file_obj)
+    else:
+        with open(walks_file_path, 'rb') as file_obj:
+            walks = pickle.load(file_obj)
     learn_embeddings(walks)
 
 

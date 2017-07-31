@@ -5,6 +5,7 @@ import pickle
 import os
 from multiprocessing.dummy import Pool as ThreadPool
 import itertools
+import alias_method
 
 import time
 
@@ -12,7 +13,7 @@ import time
 def process_node(node_id, out_degree):
     nbrs_count = out_degree
     normalized_probs = nbrs_count * [1.0 / nbrs_count] if nbrs_count > 0 else []
-    return node_id, alias_setup(normalized_probs)
+    return node_id, alias_method.alias_setup(normalized_probs)
 
 
 class Graph:
@@ -47,12 +48,11 @@ class Graph:
             if len(cur_nbrs) == 0:  # reached a dead end - finish the walk
                 break
             if len(walk) == 1:
-                alias_node = self.alias_nodes[cur]
-                next_v = cur_nbrs[alias_draw(alias_node[0], alias_node[1])]
+                alias_item = self.alias_nodes[cur]
             else:
                 prev = walk[-2]
-                alias_edge = self.alias_edges[(prev, cur)]
-                next_v = cur_nbrs[alias_draw(alias_edge[0], alias_edge[1])]
+                alias_item = self.alias_edges[(prev, cur)]
+            next_v = cur_nbrs[alias_method.alias_draw(alias_item[0], alias_item[1])]
             walk.append(next_v)
 
         return walk
@@ -65,7 +65,7 @@ class Graph:
         walks = []
         nodes = list(self.G.get_vertices())
         print('Walk iteration:')
-        # TODO: optimize
+        # TODO: parallelize
         for walk_iter in range(num_walks):
             logging.info(str(walk_iter + 1), '/', str(num_walks))
             np.random.shuffle(nodes)
@@ -157,55 +157,3 @@ class Graph:
         normalized_probs = [float(u_prob) / norm_const for u_prob in unnormalized_probs]
 
         return alias_setup(normalized_probs)
-
-
-def alias_setup(probs):
-    """
-    Compute utility lists for non-uniform sampling from discrete distributions.
-    Refer to https://hips.seas.harvard.edu/blog/2013/03/03/the-alias-method-efficient-sampling-with-many-discrete-outcomes/
-    for details
-    """
-    K = len(probs)
-    q = np.zeros(K)
-    J = np.zeros(K, dtype=np.int)
-
-    # sort the data into the outcomes with probabilities that are larger and smaller than 1/K
-    smaller = []
-    larger = []
-    for kk, prob in enumerate(probs):
-        q[kk] = K * prob
-        if q[kk] < 1.0:
-            smaller.append(kk)
-        else:
-            larger.append(kk)
-
-    # loop through and create little binary mixtures that appropriately allocate the larger outcomes
-    # over the overall uniform mixture
-    while len(smaller) > 0 and len(larger) > 0:
-        small = smaller.pop()
-        large = larger.pop()
-
-        J[small] = large
-        q[large] = q[large] + q[small] - 1.0
-        if q[large] < 1.0:
-            smaller.append(large)
-        else:
-            larger.append(large)
-
-    return J, q
-
-
-def alias_draw(J, q):
-    """
-    Draw sample from a non-uniform discrete distribution using alias sampling.
-    """
-    K = len(J)
-
-    # draw from the overall uniform mixture
-    kk = int(np.floor(np.random.rand() * K))
-
-    # draw from the binary mixture, either keeping the small one, or choosing the associated larger one
-    if np.random.rand() < q[kk]:
-        return kk
-    else:
-        return J[kk]

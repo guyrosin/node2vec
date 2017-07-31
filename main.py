@@ -1,12 +1,16 @@
 import argparse
-
 import graph_tool
 import time
 import pickle
 import os
+import logging
 
 import node2vec
 from gensim.models import Word2Vec
+
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO
+                    # , filename='log.log', filemode='w'
+                    )
 
 
 def parse_args():
@@ -15,7 +19,7 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run node2vec.")
 
-    parser.add_argument('--input', nargs='?', default='wiki.gt',
+    parser.add_argument('--input', nargs='?', default='wiki_filtered_1.gt',
                         help='Input graph path')
 
     parser.add_argument('--output', nargs='?', default='emb/karate.emb',
@@ -92,25 +96,17 @@ def main(args):
     Pipeline for representational learning for all nodes in a graph.
     '''
     walks_file_path = 'walks.pickle'
-    alias_nodes_file_path = 'alias_nodes.pickle'
-    alias_edges_file_path = 'alias_edges.pickle'
     if not os.path.isfile(walks_file_path):
         gt_g = read_graph(args.input)
-        G = node2vec.Graph(gt_g, args.directed, args.p, args.q)
-        if not os.path.isfile(alias_nodes_file_path) or not os.path.isfile(alias_edges_file_path):
-            start = time.time()
-            G.preprocess_transition_probs()
-            end = time.time()
-            print('preprocessing probs took {}'.format(end - start))
-        else:
-            with open(alias_nodes_file_path, 'rb') as file_obj:
-                G.alias_nodes = pickle.load(file_obj)
-            with open(alias_edges_file_path, 'rb') as file_obj:
-                G.alias_edges = pickle.load(file_obj)
+        G = node2vec.Graph(gt_g, args.directed, args.p, args.q, workers=args.workers)
+        start = time.time()
+        G.preprocess_transition_probs()
+        end = time.time()
+        logging.info('preprocessing all probs took {}'.format(end - start))
         start = time.time()
         walks = G.simulate_walks(args.num_walks, args.walk_length)
         end = time.time()
-        print('simulating walks took {}'.format(end - start))
+        logging.info('simulating walks took {}'.format(end - start))
         with open(walks_file_path, 'wb') as file_obj:
             pickle.dump(walks, file_obj)
     else:

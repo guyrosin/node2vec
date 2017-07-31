@@ -1,15 +1,22 @@
+import numpy as np
 import csv
 import logging
 import json
+import pickle
+import math
 
 import graph_tool
+import graph_tool.generation
+import graph_tool.draw
+import graph_tool.topology
 import py2neo
 import time
 import unidecode
 import pandas
+import os
 
-logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.WARNING,
-                    filename='log.log', filemode='w'
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO
+                    # , filename='log.log', filemode='w'
                     )
 
 
@@ -125,6 +132,115 @@ def fill_gt(g, nodes_list):
     print('saving the graph took {}'.format(end - start))
 
 
+def create_filtered_graph(g, max_dist, save=True):
+    """
+    create a filtered view of g, with vertices that are close to an event node
+    :param g: a Graph
+    :param max_dist: the max distance to an event node
+    :return: the filtered graph
+    """
+    event_i = 0
+    # create a distance map of each vertex to its closest event vertex
+    best_dist_map = np.full(g.num_vertices(), g.num_vertices())
+    for v in g.vertices():
+        if not g.vp.event[v]:
+            continue
+        if event_i % 1000 == 0:
+            logging.info('starting event #{}'.format(event_i))
+        # add v's neighborhood to the map
+        dist_map = graph_tool.topology.shortest_distance(g, source=v, max_dist=max_dist)
+        best_dist_map = np.minimum(dist_map.a, best_dist_map)
+        event_i += 1
+    logging.info('done processing nodes, will create the filtered view and save')
+    # create a filtered view of the graph, with only the vertices that are close to events
+    new_g = graph_tool.GraphView(g, vfilt=best_dist_map <= max_dist)
+    # new_g.purge_vertices()
+    new_g = graph_tool.Graph(new_g, prune=True)
+    # print(new_g.num_vertices())
+    if save:
+        new_g.save('wiki_filtered_{}.gt'.format(max_dist))
+        logging.info('saved the filtered graph, which contains {} vertices, {} edges'.format(new_g.num_vertices(),
+                                                                                             new_g.num_edges()))
+    return new_g
+
+
+def copy_neighbors(g2, g, v, title_prop, dist):
+    """
+
+    :param g2: new graph
+    :param v: index of a vertex to copy
+    :param dist: if dist>0, will continue copying recursively
+    """
+    logging.info('before: contains {} vertices, {} edges'.format(g2.num_vertices(),
+                                                                 g2.num_edges()))
+    logging.info('{} has {} neighbors'.format(g.vp.title[v], v.out_degree()))
+    for u in v.out_neighbours():
+        g2.add_edge(v, u)
+        title_prop[u] = g.vp.title[u]
+        if dist > 0:
+            copy_neighbors(g2, g, u, title_prop, dist=dist - 1)
+    logging.info('after: contains {} vertices, {} edges'.format(g2.num_vertices(),
+                                                                g2.num_edges()))
+
+
+def create_filtered_graph_manually(g, max_dist, save=True, events_limit=math.inf):
+    """
+    create a filtered view of g, with vertices that are close to an event node
+    :param g: a Graph
+    :param max_dist: the max distance to an event node
+    :return: the filtered graph
+    """
+    event_i = 0
+    g2 = graph_tool.Graph()
+
+    title_prop = g2.new_vertex_property('string')
+    # event_prop = g2.new_vertex_property('bool')
+    for v in g.vertices():
+        if event_i > events_limit:
+            break
+        if not g.vp.event[v]:
+            continue
+        if event_i % 10 == 0:
+            logging.info('starting event #{}'.format(event_i))
+        copy_neighbors(g2, g, v, title_prop, max_dist - 1)
+        # title_prop[v] = g.vp.title[v]
+        event_i += 1
+    # internalize both properties
+    # g2.vertex_properties['title'] = title_prop
+    # g2.vertex_properties['event'] = event_prop
+    logging.info('done processing nodes, will save')
+    if save:
+        g2.save('wiki_filtered_{}_manual_limit{}.gt'.format(max_dist, events_limit))
+        logging.info('saved the filtered graph, which contains {} vertices, {} edges'.format(g2.num_vertices(),
+                                                                                             g2.num_edges()))
+    return g2
+
+
+def test_filter_graph():
+    def sample_k(max):
+        accept = False
+        while not accept:
+            k = np.random.randint(1, max + 1)
+            accept = np.random.random() < 1.0 / k
+        return k
+
+    g = graph_tool.generation.random_graph(10, lambda: sample_k(3), directed=False)
+    print('{} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    graph_tool.draw.graph_draw(g, vertex_text=g.vertex_index)
+    event_prop = g.new_vertex_property('bool')
+    # for v in g.vertices():
+    #     event_prop[v] = False
+    event_prop[g.vertex(0)] = True
+    event_prop[g.vertex(1)] = True
+    # internalize both properties
+    g.vertex_properties['event'] = event_prop
+    # create a filtered view of the graph, with only the vertices that are close to events
+    g = create_filtered_graph(g, 1, save=False)
+    graph_tool.draw.graph_draw(g, vertex_text=g.vertex_index)
+    # g = graph_tool.load_graph('wiki_filtered_1.gt')
+    # graph_tool.draw.graph_draw(g, vertex_text=g.vertex_index)
+
+
 def create_graph(edgelist_file, nodes_file):
     start = time.time()
     g = create_gt_from_edgelist(edgelist_file)
@@ -165,7 +281,58 @@ def export_edgelist(neo4j):
         w.writerows(edges)
 
 
+def print_neighbors(g, v_name, nodes_dict):
+    v = g.vertex(nodes_dict[v_name])
+    for u in v.out_neighbours():
+        print(g.vp.title[u])
+
+
+def test(g):
+    # if not os.path.exists('node_name_to_id.db'):
+    node_name_to_id = {}
+    # with open('nodes.csv', 'r', encoding='utf8') as file:
+    #     csv_in = csv.reader(file)
+    #     for node_row in csv_in:
+    #         node_name_to_id[node_row[1]] = node_row[0]
+    for v in g.vertices():
+        node_name_to_id[g.vp.title[v]] = g.vertex_index[v]
+    with open('node_name_to_id.db', 'wb') as f:
+        pickle.dump(node_name_to_id, f)
+    # else:
+    #     with open('node_name_to_id.db', 'rb') as f:
+    #         node_name_to_id = pickle.load(f)
+    query = 'Khataba raid'
+    while True:
+        print('neighbors of {}:'.format(query))
+        print_neighbors(g, query, node_name_to_id)
+        # g2 = graph_tool.load_graph('wiki_filtered_2.gt')
+        # print('wiki_filtered_2:')
+        # print_neighbors(g2, query, node_name_to_id)
+        # g3 = graph_tool.load_graph('wiki_filtered_2_pruned.gt')
+        # print('wiki_filtered_2_pruned:')
+        # print_neighbors(g3, query, node_name_to_id)
+        query = input('enter a page title')
+        # nodes_db.close()
+
+
+def write_graph_info():
+    logging.info('loading graphs...')
+    g = graph_tool.load_graph('wiki_FULL.gt')
+    logging.info('wiki_FULL graph: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    # g = graph_tool.load_graph('wiki_filtered_1.gt')
+    # logging.info('filtered_1 graph: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    g = graph_tool.load_graph('wiki_filtered_2.gt')
+    logging.info('filtered_2 graph: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    g = graph_tool.load_graph('wiki_filtered_3.gt')
+    logging.info('filtered_3 graph: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+
+
 if __name__ == '__main__':
+    # g = graph_tool.load_graph('wiki_filtered_2.gt')
+    # new_g = graph_tool.Graph(g, prune=True)
+    # logging.info('filtered_2 graph: {} vertices, {} edges'.format(new_g.num_vertices(), new_g.num_edges()))
+    # new_g.save('wiki_filtered_{}_pruned.gt'.format(2))
+
     # neo4j = py2neo.Graph(user='neo4j', password='123')
     # mark_events_neo4j(neo4j)
     # neo4j_remove_titles(neo4j)
@@ -174,5 +341,19 @@ if __name__ == '__main__':
     # remove_blank_lines('nodes.csv')
     # mark_events_csv('nodes.csv')
     # export_edgelist(neo4j)
-    g = create_graph('edgeslist.csv', 'nodes.csv')
-    # g = graph_tool.load_graph('wiki.gt')
+    # g = create_graph('edgeslist.csv', 'nodes.csv')
+    # test_filter_graph()
+    # g = graph_tool.load_graph('wiki_FULL.gt')
+    # exit()
+
+    # g = graph_tool.load_graph('wiki_filtered_2.gt')
+    # logging.info('loaded the graph, with {} vertices and {} edges'.format(g.num_vertices(), g.num_edges()))
+    # new_g = create_filtered_graph_manually(g, 1, events_limit=1)
+    # new_g = create_filtered_graph(g, 2)
+    # new_g = create_filtered_graph(g, 3)
+    #
+    # write_graph_info()
+    g = graph_tool.load_graph('wiki_filtered_2_pruned.gt')
+    logging.info('wiki_filtered_2_pruned contains: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    g1 = create_filtered_graph(g, 1)
+    test(g1)

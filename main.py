@@ -28,10 +28,10 @@ def parse_args():
     parser.add_argument('--dimensions', type=int, default=128,
                         help='Number of dimensions. Default is 128.')
 
-    parser.add_argument('--walk-length', type=int, default=60,  # was 80
+    parser.add_argument('--walk-length', type=int, default=50,  # was 80
                         help='Length of walk per source. Default is 60.')
 
-    parser.add_argument('--num-walks', type=int, default=8,  # was 10
+    parser.add_argument('--num-walks', type=int, default=3,  # was 10
                         help='Number of walks per source. Default is 10.')
 
     parser.add_argument('--window-size', type=int, default=5,  # was 10
@@ -72,7 +72,9 @@ def read_graph(graph_file_path):
     start = time.time()
     g = graph_tool.load_graph(graph_file_path)
     end = time.time()
-    print('loading the graph took {}'.format(end - start))
+    logging.info('Loaded {}, which contains: {} vertices, {} edges. It took {}'.format(graph_file_path,
+                                                                                       g.num_vertices(), g.num_edges(),
+                                                                                       end - start))
     return g
 
 
@@ -80,13 +82,13 @@ def learn_embeddings(walks):
     '''
     Learn embeddings by optimizing the Skipgram objective using SGD.
     '''
-    walks = [map(str, walk) for walk in walks]
+    walks = [list(map(str, walk)) for walk in walks]  # convert each node id to a string
     start = time.time()
     model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
                      workers=args.workers, iter=args.iter)
     end = time.time()
-    print('building th w2v model took {}'.format(end - start))
-    model.save_word2vec_format(args.output)
+    logging.info('building the w2v model took {}'.format(end - start))
+    model.wv.save_word2vec_format(args.output)
 
     return
 
@@ -99,10 +101,7 @@ def main(args):
     if not os.path.isfile(walks_file_path):
         gt_g = read_graph(args.input)
         G = node2vec.Graph(gt_g, args.directed, args.p, args.q, workers=args.workers)
-        start = time.time()
         G.preprocess_transition_probs()
-        end = time.time()
-        logging.info('preprocessing all probs took {}'.format(end - start))
         start = time.time()
         walks = G.simulate_walks(args.num_walks, args.walk_length)
         end = time.time()

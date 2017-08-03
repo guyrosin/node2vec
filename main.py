@@ -76,16 +76,34 @@ def read_graph(graph_file_path):
     return g
 
 
-def learn_embeddings(walks):
-    '''
+class WalksFromDirectory(object):
+    def __init__(self, dir_path):
+        self.dir_path = dir_path
+
+    def __iter__(self):
+        walks_files = filter(lambda file: file.endswith('.pickle'), os.listdir(self.dir_path))
+        for file in walks_files:
+            start = time.time()
+            with open(os.path.join(self.dir_path, file), 'rb') as f:
+                walks = pickle.load(f)
+            end = time.time()
+            logging.info('loading walks from {} took {}'.format(file, end - start))
+            start = time.time()
+            walks = [list(map(str, walk)) for walk in walks]  # convert each node id to a string
+            end = time.time()
+            logging.info('converting walks to strings took {}'.format(end - start))
+            for walk in walks:
+                yield walk
+            logging.info('done with walks file: {}'.format(file))
+
+
+def learn_embeddings(dir_path):
+    """
     Learn embeddings by optimizing the Skipgram objective using SGD.
-    '''
+    """
+    corpus = WalksFromDirectory(dir_path)
     start = time.time()
-    walks = [list(map(str, walk)) for walk in walks]  # convert each node id to a string
-    end = time.time()
-    logging.info('converting the walks to strings took {}'.format(end - start))
-    start = time.time()
-    model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
+    model = Word2Vec(corpus, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
                      workers=args.workers, iter=args.iter)
     end = time.time()
     logging.info('building the w2v model took {}'.format(end - start))
@@ -104,7 +122,7 @@ def main(args):
         G = node2vec.Graph(gt_g, args.directed, args.p, args.q, workers=args.workers)
         G.preprocess_transition_probs()
         start = time.time()
-        walks = G.simulate_walks(args.num_walks, args.walk_length)
+        G.simulate_walks(args.num_walks, args.walk_length)
         end = time.time()
         logging.info('simulating walks took {}'.format(end - start))
         # with open(walks_file_path, 'wb') as f:
@@ -113,26 +131,33 @@ def main(args):
         # with open(walks_file_path, 'wb') as file_obj:
         # pickle.dump(walks, file_obj)
     else:
-        logging.info('loading walks files')
+        logging.info('loading walks files and building word2vec model')
+    learn_embeddings(args.walks_dir)
+
+
+def convert_walks(args):
+    walks_files = filter(lambda file: file.endswith('.pickle'), os.listdir(args.walks_dir))
+    for file in walks_files:
         start = time.time()
-        walks = []
-        for walk_iter in range(args.num_walks):
-            walks_file_path = '{}/walk_iter_{}.pickle'.format(args.walks_dir, walk_iter + 1)
-            with open(walks_file_path, 'rb') as f:
-                walks.extend(pickle.load(f))
-            logging.info('done with walks file #{}'.format(walk_iter + 1))
-        # with open(walks_file_path, 'rb') as file_obj:
-        #     walks = pickle.load(file_obj)
+        with open(os.path.join(args.walks_dir, file), 'rb') as f:
+            walks = pickle.load(f)
         end = time.time()
-        logging.info('loading walks file took {}'.format(end - start))
-    learn_embeddings(walks)
+        logging.info('loading walks from {} took {}'.format(file, end - start))
+        start = time.time()
+        walks = [','.join(map(str, walk)) for walk in walks]  # convert each node id to a string
+        end = time.time()
+        logging.info('converting walks to strings took {}'.format(end - start))
+        with open(os.path.join(args.walks_dir, file + '.txt'), 'w') as f:
+            f.write('\n'.join(walks))
+        logging.info('done with walks file: {}'.format(file))
 
 
 if __name__ == "__main__":
     args = parse_args()
-    args.walks_dir = 'walks_walksnum{}_walklength{}'.format(args.num_walks, args.walk_length) \
-        if args.walks_dir is None else args.walks_dir
+    args.walks_dir = 'data/walks_walklength{}'.format(args.walk_length) if args.walks_dir is None else args.walks_dir
     logging.info('running node2vec with params: ')
     for k, v in sorted(vars(args).items()):
         logging.info('{}: {}'.format(k, v))
+    convert_walks(args)
+    exit()
     main(args)

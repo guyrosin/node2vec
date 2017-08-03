@@ -105,15 +105,12 @@ class Graph:
         #     walks.extend([val for sublist in walks_result for val in sublist])
 
         # sequential
-        walks = []
         for walk_iter in range(num_walks):
             start = time.time()
             permuted_nodes = np.random.permutation(nodes)
             end = time.time()
             logging.info('nodes permutation took {}. Now running the simulation...'.format(end - start))
-            walks.extend(self.simulate_walks_iteration(walk_iter, permuted_nodes, walk_length))
-
-        return walks
+            self.simulate_walks_iteration(walk_iter, permuted_nodes, walk_length)
 
     def preprocess_transition_probs(self):
         """

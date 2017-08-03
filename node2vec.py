@@ -6,8 +6,6 @@ import pickle
 import os
 from multiprocessing import Pool
 
-import alias_method
-
 import graph_utils
 
 
@@ -21,10 +19,10 @@ class Graph:
         self.q = q
         self.divq = 1.0 / self.q
         self.workers = workers
-        self.alias_nodes_file = 'alias_nodes.pickle' if alias_nodes_file is None else alias_nodes_file
-        self.alias_edges_file = 'alias_edges.pickle' if alias_edges_file is None else alias_edges_file
-        self.neighbors_dict_file = 'neighbors_dict.pickle' if neighbors_dict_file is None else neighbors_dict_file
-        self.alias_edges_file_temp = 'alias_edges_{}.pickle'
+        self.alias_nodes_file = 'data/alias_nodes.pickle' if alias_nodes_file is None else alias_nodes_file
+        self.alias_edges_file = 'data/alias_edges.pickle' if alias_edges_file is None else alias_edges_file
+        self.neighbors_dict_file = 'data/neighbors_dict.pickle' if neighbors_dict_file is None else neighbors_dict_file
+        # self.alias_edges_file_temp = 'alias_edges_{}.pickle'
         self.alias_nodes = None
         self.alias_edges = None
         self.neighbors_dict = None
@@ -66,11 +64,9 @@ class Graph:
 
     def simulate_walks_iteration(self, walk_iter, permuted_nodes, walk_length):
         logging.info('Walk iteration #{}'.format(walk_iter + 1))
-        walks = []
-        for node in permuted_nodes:
-            walks.append(self.node2vec_walk(walk_length=walk_length, start_node=node))
-        with open('walk_iter_{}'.format(walk_iter + 1), 'wb') as f:
-            pickle.dump(walks, f)
+        walks = [self.node2vec_walk(walk_length=walk_length, start_node=node) for node in permuted_nodes]
+        with open('data/walk_iter_{}.pickle'.format(walk_iter + 1), 'wb') as f:
+            pickle.dump(walks, f, protocol=4)
         return walks
 
     def simulate_walks(self, num_walks, walk_length):
@@ -79,14 +75,44 @@ class Graph:
         """
 
         nodes = list(self.G.get_vertices())
-        pool = Pool(processes=4)
         logging.info('Simulating {} walks.'.format(num_walks))
-        parameters = [(walk_iter, np.random.permutation(nodes), walk_length) for walk_iter in range(num_walks)]
-        walks_result = list(pool.starmap(self.simulate_walks_iteration, parameters))
-        pool.close()
-        pool.join()
-        # flatten the result (each process returned a list of walks)
-        walks = [val for sublist in walks_result for val in sublist]
+        # multiprocessing
+        # pool = Pool(processes=4)
+        # start = time.time()
+        # parameters = [(walk_iter, np.random.permutation(nodes), walk_length) for walk_iter in range(num_walks)]
+        # end = time.time()
+        # logging.info('Building the parameters took {}. Now running the simulation...'.format(end - start))
+        # walks_result = list(pool.starmap(self.simulate_walks_iteration, parameters))
+        # pool.close()
+        # pool.join()
+        # # flatten the result (each process returned a list of walks)
+        # walks = [val for sublist in walks_result for val in sublist]
+
+        # multiprocessing over chunks (process x walks concurrently)
+        # walks = []
+        # chunk_size = 2
+        # pool = Pool(processes=4)
+        # for chunk in graph_utils.chunks(range(num_walks), chunk_size):
+        #     start = time.time()
+        #     parameters = [(walk_iter, np.random.permutation(nodes), walk_length) for walk_iter in chunk]
+        #     end = time.time()
+        #     logging.info('Building the parameters (for a chunk of {}) took {}. Now running the simulation...'
+        #                  .format(chunk_size, end - start))
+        #     walks_result = list(pool.starmap(self.simulate_walks_iteration, parameters))
+        #     pool.close()
+        #     pool.join()
+        #     # flatten the result (each process returned a list of walks)
+        #     walks.extend([val for sublist in walks_result for val in sublist])
+
+        # sequential
+        walks = []
+        for walk_iter in range(num_walks):
+            start = time.time()
+            permuted_nodes = np.random.permutation(nodes)
+            end = time.time()
+            logging.info('nodes permutation took {}. Now running the simulation...'.format(end - start))
+            walks.extend(self.simulate_walks_iteration(walk_iter, permuted_nodes, walk_length))
+
         return walks
 
     def preprocess_transition_probs(self):
@@ -96,9 +122,9 @@ class Graph:
         if self.alias_nodes is None:
             self.preprocess_node_transition_probs()
         if self.neighbors_dict is None:
-            graph_utils.save_neighbors(self.G, self.neighbors_dict_file)
-            with open(self.neighbors_dict_file, 'rb') as f:
-                self.neighbors_dict = pickle.load(f)
+            self.neighbors_dict = graph_utils.get_all_neighbors(self.G)
+            with open(self.neighbors_dict_file, 'wb') as f:
+                pickle.dump(self.neighbors_dict, f)
                 # if self.alias_edges is None:
                 #     self.preprocess_edge_transition_probs()
 

@@ -19,19 +19,22 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run node2vec.")
 
-    parser.add_argument('--input', nargs='?', default='wiki_filtered_1.gt',
+    parser.add_argument('--input', nargs='?', default='data/wiki_filtered_2_pruned.gt',
                         help='Input graph path')
 
-    parser.add_argument('--output', nargs='?', default='emb/karate.emb',
+    parser.add_argument('--output', nargs='?', default='data/wiki.emb',
                         help='Embeddings path')
+
+    parser.add_argument('--walks-dir', nargs='?', default=None,
+                        help='Directory that contains walks files')
 
     parser.add_argument('--dimensions', type=int, default=128,
                         help='Number of dimensions. Default is 128.')
 
-    parser.add_argument('--walk-length', type=int, default=50,  # was 80
+    parser.add_argument('--walk-length', type=int, default=20,  # was 80
                         help='Length of walk per source. Default is 60.')
 
-    parser.add_argument('--num-walks', type=int, default=3,  # was 10
+    parser.add_argument('--num-walks', type=int, default=4,  # was 10
                         help='Number of walks per source. Default is 10.')
 
     parser.add_argument('--window-size', type=int, default=5,  # was 10
@@ -51,11 +54,6 @@ def parse_args():
 
     parser.add_argument('--q', type=float, default=1,
                         help='Inout hyperparameter. Default is 1.')
-
-    parser.add_argument('--weighted', dest='weighted', action='store_true',
-                        help='Boolean specifying (un)weighted. Default is unweighted.')
-    parser.add_argument('--unweighted', dest='unweighted', action='store_false')
-    parser.set_defaults(weighted=False)
 
     parser.add_argument('--directed', dest='directed', action='store_true',
                         help='Graph is (un)directed. Default is directed.')
@@ -82,7 +80,10 @@ def learn_embeddings(walks):
     '''
     Learn embeddings by optimizing the Skipgram objective using SGD.
     '''
+    start = time.time()
     walks = [list(map(str, walk)) for walk in walks]  # convert each node id to a string
+    end = time.time()
+    logging.info('converting the walks to strings took {}'.format(end - start))
     start = time.time()
     model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
                      workers=args.workers, iter=args.iter)
@@ -90,15 +91,15 @@ def learn_embeddings(walks):
     logging.info('building the w2v model took {}'.format(end - start))
     model.wv.save_word2vec_format(args.output)
 
-    return
-
 
 def main(args):
     '''
     Pipeline for representational learning for all nodes in a graph.
     '''
-    walks_file_path = 'walks.pickle'
-    if not os.path.isfile(walks_file_path):
+    # walks_file_path = 'data/walks.pickle'
+    if not all(os.path.isfile('{}/walk_iter_{}.pickle'.format(args.walks_dir, walk_iter + 1))
+               for walk_iter in range(args.num_walks)):
+        logging.info('loading the graph')
         gt_g = read_graph(args.input)
         G = node2vec.Graph(gt_g, args.directed, args.p, args.q, workers=args.workers)
         G.preprocess_transition_probs()
@@ -106,14 +107,32 @@ def main(args):
         walks = G.simulate_walks(args.num_walks, args.walk_length)
         end = time.time()
         logging.info('simulating walks took {}'.format(end - start))
-        with open(walks_file_path, 'wb') as file_obj:
-            pickle.dump(walks, file_obj)
+        # with open(walks_file_path, 'wb') as f:
+        #     pickle.dump(walks, f, protocol=4)
+        # logging.info('saved the walks to a file.')
+        # with open(walks_file_path, 'wb') as file_obj:
+        # pickle.dump(walks, file_obj)
     else:
-        with open(walks_file_path, 'rb') as file_obj:
-            walks = pickle.load(file_obj)
+        logging.info('loading walks files')
+        start = time.time()
+        walks = []
+        for walk_iter in range(args.num_walks):
+            walks_file_path = '{}/walk_iter_{}.pickle'.format(args.walks_dir, walk_iter + 1)
+            with open(walks_file_path, 'rb') as f:
+                walks.extend(pickle.load(f))
+            logging.info('done with walks file #{}'.format(walk_iter + 1))
+        # with open(walks_file_path, 'rb') as file_obj:
+        #     walks = pickle.load(file_obj)
+        end = time.time()
+        logging.info('loading walks file took {}'.format(end - start))
     learn_embeddings(walks)
 
 
 if __name__ == "__main__":
     args = parse_args()
+    args.walks_dir = 'walks_walksnum{}_walklength{}'.format(args.num_walks, args.walk_length) \
+        if args.walks_dir is None else args.walks_dir
+    logging.info('running node2vec with params: ')
+    for k, v in sorted(vars(args).items()):
+        logging.info('{}: {}'.format(k, v))
     main(args)

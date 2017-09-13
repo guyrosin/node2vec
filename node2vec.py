@@ -37,6 +37,7 @@ class Graph:
     def node2vec_walk(self, walk_length, start_node):
         """
         Simulate a random walk starting from start node.
+        Return the walk as a string of comma-separated node IDs
         """
 
         walk = [start_node]
@@ -60,16 +61,22 @@ class Graph:
             next_v = cur_nbrs[next_neighbor_i]
             walk.append(next_v)
 
-        return walk
+        return ','.join(map(str, walk))
 
-    def simulate_walks_iteration(self, walk_iter, permuted_nodes, walk_length):
-        logging.info('Walk iteration #{}'.format(walk_iter + 1))
+    def simulate_walks_iteration(self, walk_iter, permuted_nodes, walk_length, walks_dir):
+        logging.info('starting walks iteration #{}'.format(walk_iter + 1))
+        start = time.time()
         walks = [self.node2vec_walk(walk_length=walk_length, start_node=node) for node in permuted_nodes]
-        with open('data/walk_iter_{}.pickle'.format(walk_iter + 1), 'wb') as f:
-            pickle.dump(walks, f, protocol=4)
+        end = time.time()
+        logging.info('simulating walks iteration #{} took {}'.format(walk_iter + 1, end - start))
+        walks = '\n'.join(walks)
+        file = os.path.join(walks_dir, 'walks_iter_{}.txt'.format(walk_iter + 1))
+        with open(file, 'w') as f:
+            f.write(walks)
+        logging.info('saved walks file: {}'.format(file))
         return walks
 
-    def simulate_walks(self, num_walks, walk_length):
+    def simulate_walks(self, num_walks, walk_length, walks_dir):
         """
         Repeatedly simulate random walks from each node.
         """
@@ -110,7 +117,7 @@ class Graph:
             permuted_nodes = np.random.permutation(nodes)
             end = time.time()
             logging.info('nodes permutation took {}. Now running the simulation...'.format(end - start))
-            self.simulate_walks_iteration(walk_iter, permuted_nodes, walk_length)
+            self.simulate_walks_iteration(walk_iter, permuted_nodes, walk_length, walks_dir)
 
     def preprocess_transition_probs(self):
         """

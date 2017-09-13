@@ -1,4 +1,6 @@
 import argparse
+import fileinput
+
 import graph_tool
 import time
 import pickle
@@ -14,9 +16,9 @@ logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=lo
 
 
 def parse_args():
-    '''
+    """
     Parses the node2vec arguments.
-    '''
+    """
     parser = argparse.ArgumentParser(description="Run node2vec.")
 
     parser.add_argument('--input', nargs='?', default='data/wiki_filtered_2_pruned.gt',
@@ -31,7 +33,7 @@ def parse_args():
     parser.add_argument('--dimensions', type=int, default=128,
                         help='Number of dimensions. Default is 128.')
 
-    parser.add_argument('--walk-length', type=int, default=20,  # was 80
+    parser.add_argument('--walk-length', type=int, default=50,  # was 80
                         help='Length of walk per source. Default is 60.')
 
     parser.add_argument('--num-walks', type=int, default=4,  # was 10
@@ -64,9 +66,9 @@ def parse_args():
 
 
 def read_graph(graph_file_path):
-    '''
+    """
     Reads the input network in graph_tool, as a directed graph
-    '''
+    """
     start = time.time()
     g = graph_tool.load_graph(graph_file_path)
     end = time.time()
@@ -81,20 +83,11 @@ class WalksFromDirectory(object):
         self.dir_path = dir_path
 
     def __iter__(self):
-        walks_files = filter(lambda file: file.endswith('.pickle'), os.listdir(self.dir_path))
-        for file in walks_files:
-            start = time.time()
-            with open(os.path.join(self.dir_path, file), 'rb') as f:
-                walks = pickle.load(f)
-            end = time.time()
-            logging.info('loading walks from {} took {}'.format(file, end - start))
-            start = time.time()
-            walks = [list(map(str, walk)) for walk in walks]  # convert each node id to a string
-            end = time.time()
-            logging.info('converting walks to strings took {}'.format(end - start))
-            for walk in walks:
-                yield walk
-            logging.info('done with walks file: {}'.format(file))
+        walks_files = filter(lambda file: file.endswith('.txt'), os.listdir(self.dir_path))
+        walks_files = [os.path.join(self.dir_path, file) for file in walks_files]
+        with fileinput.input(walks_files) as line_iter:
+            for line in line_iter:
+                yield line.split(',')  # each line is a walk (node IDs separated with commas)
 
 
 def learn_embeddings(dir_path):
@@ -111,18 +104,18 @@ def learn_embeddings(dir_path):
 
 
 def main(args):
-    '''
+    """
     Pipeline for representational learning for all nodes in a graph.
-    '''
+    """
     # walks_file_path = 'data/walks.pickle'
-    if not all(os.path.isfile('{}/walk_iter_{}.pickle'.format(args.walks_dir, walk_iter + 1))
+    if not all(os.path.isfile('{}/walk_iter_{}.txt'.format(args.walks_dir, walk_iter + 1))
                for walk_iter in range(args.num_walks)):
         logging.info('loading the graph')
         gt_g = read_graph(args.input)
         G = node2vec.Graph(gt_g, args.directed, args.p, args.q, workers=args.workers)
         G.preprocess_transition_probs()
         start = time.time()
-        G.simulate_walks(args.num_walks, args.walk_length)
+        G.simulate_walks(args.num_walks, args.walk_length, args.walks_dir)
         end = time.time()
         logging.info('simulating walks took {}'.format(end - start))
         # with open(walks_file_path, 'wb') as f:
@@ -135,29 +128,11 @@ def main(args):
     learn_embeddings(args.walks_dir)
 
 
-def convert_walks(args):
-    walks_files = filter(lambda file: file.endswith('.pickle'), os.listdir(args.walks_dir))
-    for file in walks_files:
-        start = time.time()
-        with open(os.path.join(args.walks_dir, file), 'rb') as f:
-            walks = pickle.load(f)
-        end = time.time()
-        logging.info('loading walks from {} took {}'.format(file, end - start))
-        start = time.time()
-        walks = [','.join(map(str, walk)) for walk in walks]  # convert each node id to a string
-        end = time.time()
-        logging.info('converting walks to strings took {}'.format(end - start))
-        with open(os.path.join(args.walks_dir, file + '.txt'), 'w') as f:
-            f.write('\n'.join(walks))
-        logging.info('done with walks file: {}'.format(file))
-
-
 if __name__ == "__main__":
     args = parse_args()
     args.walks_dir = 'data/walks_walklength{}'.format(args.walk_length) if args.walks_dir is None else args.walks_dir
+    os.makedirs(args.walks_dir, exist_ok=True)  # create necessary directories
     logging.info('running node2vec with params: ')
     for k, v in sorted(vars(args).items()):
         logging.info('{}: {}'.format(k, v))
-    convert_walks(args)
-    exit()
     main(args)

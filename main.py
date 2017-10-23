@@ -94,6 +94,7 @@ def learn_embeddings(dir_path):
     """
     Learn embeddings by optimizing the Skipgram objective using SGD.
     """
+    logging.info('building word2vec model out of the walks in {}'.format(dir_path))
     corpus = WalksFromDirectory(dir_path)
     start = time.time()
     model = Word2Vec(corpus, size=args.dimensions, window=args.window_size, min_count=args.min_count, sg=1,
@@ -123,8 +124,7 @@ def main(args):
         # logging.info('saved the walks to a file.')
         # with open(walks_file_path, 'wb') as file_obj:
         # pickle.dump(walks, file_obj)
-    else:
-        logging.info('loading walks files and building word2vec model')
+
     learn_embeddings(args.walks_dir)
 
 

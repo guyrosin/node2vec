@@ -315,6 +315,55 @@ def test(g):
         # nodes_db.close()
 
 
+def clean_node_names():
+    def clean(s):
+        return s.replace('"', '').replace(' ', '_').lower()
+
+    node_id_to_name = {}
+    node_name_to_id = {}
+    with open('data/nodes.csv', 'r', encoding='utf8', newline='') as file:
+        with open('data/nodes_clean.csv', 'w', encoding='utf8', newline='') as newfile:
+            csv_in = csv.reader(file)
+            writer = csv.writer(newfile)
+            for node_row in csv_in:
+                node_row[1] = clean(node_row[1])
+                writer.writerow(node_row)
+                node_id_to_name[node_row[0]] = node_row[1]
+                node_name_to_id[node_row[1]] = node_row[0]
+    with open('data/node_id_to_name_clean.db', 'wb') as f:
+        pickle.dump(node_id_to_name, f)
+    with open('data/node_name_to_id_clean.db', 'wb') as f:
+        pickle.dump(node_name_to_id, f)
+
+
+def w2v_model_inject_names(model_name):
+    with open('data/node_id_to_name_clean.db', 'rb') as f:
+        node_id_to_name = pickle.load(f)
+
+    with open('data/{}.emb'.format(model_name), 'r', encoding='utf8', newline='') as file:
+        with open('data/{}.model'.format(model_name), 'w', encoding='utf8', newline='') as new_file:
+            reader = csv.reader(file, delimiter=' ')
+            writer = csv.writer(new_file, delimiter=' ')
+            writer.writerow(next(reader))
+            vocab_len = 0
+            invalid_count = 0
+            for node_row in reader:
+                if len(node_row) == 129 and len(node_row[0]) > 0:
+                    try:
+                        node_id = node_row[0]
+                        node_row[0] = node_id_to_name[node_id]
+                        writer.writerow(node_row)
+                        vocab_len += 1
+                    except:
+                        logging.exception('exception in line: {}'.format(node_row))
+                else:
+                    # logging.error('invalid line: {}'.format(node_row))
+                    invalid_count += 1
+            print('number of invalid rows: {}'.format(invalid_count))
+            print('vocabulary length: {}. Remember to edit the first line with it!'.format(vocab_len))
+            # sed -i 's/%d+ /{vocab_len}' {filename} (vocab_len=6572500)
+
+
 def write_graph_info():
     logging.info('loading graphs...')
     g = graph_tool.load_graph('wiki_FULL.gt')
@@ -353,7 +402,10 @@ if __name__ == '__main__':
     # new_g = create_filtered_graph(g, 3)
     #
     # write_graph_info()
-    g = graph_tool.load_graph('wiki_filtered_2_pruned.gt')
-    logging.info('wiki_filtered_2_pruned contains: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
-    g1 = create_filtered_graph(g, 1)
-    test(g1)
+
+    # g = graph_tool.load_graph('wiki_filtered_2_pruned.gt')
+    # logging.info('wiki_filtered_2_pruned contains: {} vertices, {} edges'.format(g.num_vertices(), g.num_edges()))
+    # g1 = create_filtered_graph(g, 1)
+    # test(g1)
+    clean_node_names()
+    w2v_model_inject_names('wiki_walksnum4_walklength30')
